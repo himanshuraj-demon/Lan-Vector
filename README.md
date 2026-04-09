@@ -1,25 +1,37 @@
-🎙️ Voice AI Translator App
+# 🎙️ Voice AI Translator App
 
-A full-stack AI-powered voice translator built using React Native (Expo) and Node.js backend with OpenAI.
+A full-stack AI-powered voice translator built using **React Native (Expo)** and **Node.js backend with OpenAI**.
 
-🚀 Features
-🎤 Voice input recording (Android + iOS)
-🌍 Multi-language translation (Hindi, Marathi, Telugu, etc.)
-🔊 AI-generated speech output (Male / Female voices)
-🇮🇳 Indian accent simulation
-🎧 Auto-play audio with player UI
-📱 Clean mobile UI with tab navigation
-⚡ Real-time processing using OpenAI APIs
-🏗️ Tech Stack
-Frontend
-React Native (Expo)
-NativeWind (Tailwind CSS)
-Expo AV (Audio recording & playback)
-Backend
-Node.js + Express
-OpenAI API (Transcription + Translation + TTS)
-Multer (file upload)
-FFmpeg (audio conversion)
+---
+
+## 🚀 Features
+
+* 🎤 Voice input recording (Android + iOS)
+* 🌍 Multi-language translation (Hindi, Marathi, Telugu, etc.)
+* 🔊 AI-generated speech output (Male / Female voices)
+* 🇮🇳 Indian accent simulation
+* 🎧 Auto-play audio with player UI
+* 📱 Clean mobile UI with tab navigation
+* ⚡ Real-time processing using OpenAI APIs
+
+---
+
+## 🏗️ Tech Stack
+
+### Frontend
+
+* React Native (Expo)
+* NativeWind (Tailwind CSS)
+* Expo AV (Audio recording & playback)
+
+### Backend
+
+* Node.js + Express
+* OpenAI API (Transcription + Translation + TTS)
+* Multer (file upload)
+* FFmpeg (audio conversion)
+
+---
 
 
 ## 📂 Project Structure
@@ -33,6 +45,17 @@ project-root/
 ```
 
 ---
+
+## 🔁 How It Works
+
+1. 🎙️ User records voice
+2. 📡 Audio sent to backend
+3. 🔄 FFmpeg converts audio to WAV
+4. 🧠 OpenAI transcribes speech → text
+5. 🌍 Text translated to selected language
+6. 🔊 AI generates speech output
+7. 📱 App plays audio automatically
+
 
 ## ⚙️ Setup Instructions
 
