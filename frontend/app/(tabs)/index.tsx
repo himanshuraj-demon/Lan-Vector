@@ -288,7 +288,7 @@ export default function ProductPage() {
                   {[
                     { icon: "🎙️", text: "Hands-free, real-time voice translation" },
                     { icon: "🌐", text: "Supports 12+ languages including Hindi, Gujarati, Japanese & more" },
-                    { icon: "⚡", text: "Sub-500ms latency for natural conversation flow" },
+                    { icon: "⚡", text: "Sub-5s latency for natural conversation flow" },
                     { icon: "📡", text: "Modular API-first architecture — offline-ready roadmap" },
                   ].map((item, i) => (
                     <View key={i} style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>

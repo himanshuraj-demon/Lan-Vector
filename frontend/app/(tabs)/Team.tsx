@@ -13,17 +13,17 @@ const StyledSafeArea = styled(SafeAreaView);
 // ── Team data ─────────────────────────────────────────────────────────────────
 const TEAM = [
   { name: "Harshit Singh",      roll: "25110129" },
-  { name: "Anish Patil",        roll: "25110222" },
+  { name: "Anish Patil",        roll: "25110032" },
   { name: "Om Malusare",        roll: "25110222" },
-  { name: "Harshit Maida",      roll: "25110222" },
-  { name: "Vaibhav Paliwal",    roll: "25110222" },
-  { name: "Heruthik",           roll: "25110222" },
+  { name: "Harshit Maida",      roll: "25110128" },
+  { name: "Vaibhav Paliwal",    roll: "25110334" },
+  { name: "Heruthik",           roll: "25110130" },
   { name: "Himanshu Raj",       roll: "25110131" },
   { name: "Shivnath Surnar",    roll: "25110294" },
-  { name: "Trilok Shah",        roll: "25110222" },
-  { name: "Rajpal",             roll: "25110222" },
-  { name: "Prithviraj Poojari", roll: "25110222" },
-  { name: "Mir Aftab Rahman",   roll: "25110222" },
+  { name: "Trilok Shah",        roll: "25110327" },
+  { name: "Rajpal",             roll: "25110261" },
+  { name: "Prithviraj Poojari", roll: "25110253" },
+  { name: "Mir Aftab Rahman",   roll: "25110202" },
 ];
 
 // Initials from name
