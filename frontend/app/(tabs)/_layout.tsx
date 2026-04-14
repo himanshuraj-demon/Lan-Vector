@@ -51,7 +51,7 @@ const TabsLayout = () => {
         {tabs.map((tab) => (
           <Tabs.Screen key={tab.name} name={tab.name} options={{ title: tab.title, tabBarIcon: ({ focused }) => (<Tabicon focused={focused} icon={tab.icon} />) }} />
         ))}
-        <Tabs.Screen name="subscription/[id]" options={{ href: null }} />
+        <Tabs.Screen name="Device" options={{ href: null }} />
       </Tabs>
     </>
   )
