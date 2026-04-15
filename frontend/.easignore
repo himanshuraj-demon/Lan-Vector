@@ -1,0 +1,14 @@
+node_modules
+.git
+.gitignore
+.expo
+.expo-shared
+android/build
+android/app/build
+ios/build
+*.log
+*.tmp
+*.cache
+dist
+build
+coverage

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -8,143 +8,195 @@ import {
   Animated,
   PermissionsAndroid,
   Platform,
+  StyleSheet,
+  Dimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Audio } from "expo-av";
 import { styled } from "nativewind";
 
 const StyledSafeArea = styled(SafeAreaView);
+const { width } = Dimensions.get("window");
 
 const SERVICE_UUID = "12345678-1234-1234-1234-123456789abc";
 const CHARACTERISTIC_UUID = "abcd1234-5678-1234-5678-123456789abc";
 const VITE_URL = process.env.EXPO_PUBLIC_API_URL;
 
-// ── Detect if BLE is available (not supported in Expo Go) ─────────────────────
-const isBleAvailable = (): boolean => {
-  try {
-    require("react-native-ble-plx");
-    return true;
-  } catch {
-    return false;
-  }
-};
+// ─── Safe BLE import ────────────────────────────────────────────────────────
+let BleManager: any = null;
+let isBleSupported = false;
 
-// Lazily create BleManager only if available
-let bleManager: any = null;
+try {
+  const ble = require("react-native-ble-plx");
+  BleManager = ble.BleManager;
+  isBleSupported = true;
+} catch {
+  isBleSupported = false;
+}
+
+let bleManagerInstance: any = null;
+let bleSubscription: any = null;
+
 const getBleManager = () => {
-  if (!isBleAvailable()) return null;
-  if (!bleManager) {
+  if (!isBleSupported) return null;
+  if (!bleManagerInstance) {
     try {
-      const { BleManager } = require("react-native-ble-plx");
-      bleManager = new BleManager();
+      bleManagerInstance = new BleManager();
     } catch {
+      isBleSupported = false;
       return null;
     }
   }
-  return bleManager;
+  return bleManagerInstance;
 };
 
-// ── Mic icon ──────────────────────────────────────────────────────────────────
-const MicIcon = () => (
-  <View style={{ width: 36, height: 36, alignItems: "center" }}>
-    <View style={{ width: 16, height: 22, borderRadius: 8, borderWidth: 2.5, borderColor: "#fff", marginBottom: 2 }} />
-    <View style={{ width: 24, height: 2.5, backgroundColor: "#fff", borderRadius: 2 }} />
-    <View style={{ width: 2.5, height: 8, backgroundColor: "#fff", borderRadius: 2, marginTop: -1 }} />
-  </View>
-);
-
-// ── Stop icon ─────────────────────────────────────────────────────────────────
-const StopIcon = () => (
-  <View style={{ width: 22, height: 22, borderRadius: 5, backgroundColor: "#fff" }} />
-);
-
-// ── Pulse ring ────────────────────────────────────────────────────────────────
-const PulseRing = ({ anim, color }: { anim: Animated.Value; color: string }) => (
-  <Animated.View style={{
-    position: "absolute",
-    width: 110, height: 110, borderRadius: 55,
-    borderWidth: 1.5, borderColor: color,
-    opacity: anim.interpolate({ inputRange: [0, 1], outputRange: [0.6, 0] }),
-    transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.9] }) }],
-  }} />
-);
-
-// ── Animated waveform ─────────────────────────────────────────────────────────
-const Waveform = ({ isActive }: { isActive: boolean }) => {
-  const bars = Array.from({ length: 22 }, () => useRef(new Animated.Value(0.15)).current);
+// ─── Pulse Ring ─────────────────────────────────────────────────────────────
+function PulseRing({ active, color }: { active: boolean; color: string }) {
+  const ring1 = useRef(new Animated.Value(1)).current;
+  const ring2 = useRef(new Animated.Value(1)).current;
+  const opacity1 = useRef(new Animated.Value(0.6)).current;
+  const opacity2 = useRef(new Animated.Value(0.4)).current;
 
   useEffect(() => {
-    if (!isActive) {
-      bars.forEach((b) => Animated.spring(b, { toValue: 0.15, useNativeDriver: true }).start());
+    if (!active) {
+      ring1.setValue(1);
+      ring2.setValue(1);
+      opacity1.setValue(0.6);
+      opacity2.setValue(0.4);
       return;
     }
-    const anims = bars.map((b, i) =>
-      Animated.loop(
+    const a1 = Animated.loop(
+      Animated.parallel([
         Animated.sequence([
-          Animated.delay(i * 55),
-          Animated.spring(b, { toValue: 0.15 + Math.random() * 0.85, useNativeDriver: true, tension: 80, friction: 5 }),
-          Animated.spring(b, { toValue: 0.15, useNativeDriver: true, tension: 60 }),
-        ])
-      )
+          Animated.timing(ring1, {
+            toValue: 1.55,
+            duration: 900,
+            useNativeDriver: true,
+          }),
+          Animated.timing(ring1, {
+            toValue: 1,
+            duration: 900,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(opacity1, {
+            toValue: 0,
+            duration: 900,
+            useNativeDriver: true,
+          }),
+          Animated.timing(opacity1, {
+            toValue: 0.6,
+            duration: 900,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]),
     );
-    anims.forEach((a) => a.start());
-    return () => anims.forEach((a) => a.stop());
-  }, [isActive]);
-
-  return (
-    <View style={{ flexDirection: "row", alignItems: "center", height: 36, gap: 2.5 }}>
-      {bars.map((b, i) => (
-        <Animated.View key={i} style={{
-          width: 3, height: 30, borderRadius: 2,
-          backgroundColor: isActive ? "#38bdf8" : "#1e3a52",
-          transform: [{ scaleY: b }],
-        }} />
-      ))}
-    </View>
-  );
-};
-
-// ── BLE status pill ───────────────────────────────────────────────────────────
-const BlePill = ({ connected, scanning }: { connected: boolean; scanning: boolean }) => {
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    if (scanning || connected) {
-      Animated.loop(
+    const a2 = Animated.loop(
+      Animated.parallel([
         Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.5, duration: 700, useNativeDriver: true }),
-          Animated.timing(pulseAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
-        ])
-      ).start();
-    } else {
-      pulseAnim.setValue(1);
-    }
-  }, [scanning, connected]);
+          Animated.timing(ring2, {
+            toValue: 1.9,
+            duration: 1300,
+            useNativeDriver: true,
+          }),
+          Animated.timing(ring2, {
+            toValue: 1,
+            duration: 1300,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(opacity2, {
+            toValue: 0,
+            duration: 1300,
+            useNativeDriver: true,
+          }),
+          Animated.timing(opacity2, {
+            toValue: 0.4,
+            duration: 1300,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]),
+    );
+    a1.start();
+    setTimeout(() => a2.start(), 300);
+    return () => {
+      a1.stop();
+      a2.stop();
+    };
+  }, [active]);
 
-  const color = connected ? "#34d399" : scanning ? "#facc15" : "#475569";
-  const label = connected ? "ESP32 Connected" : scanning ? "Scanning…" : "Disconnected";
-
+  if (!active) return null;
   return (
-    <View style={{
-      flexDirection: "row", alignItems: "center", gap: 8,
-      backgroundColor: `${color}10`, paddingHorizontal: 14, paddingVertical: 8,
-      borderRadius: 100, borderWidth: 1, borderColor: `${color}28`,
-    }}>
-      <View style={{ width: 12, height: 12, alignItems: "center", justifyContent: "center" }}>
-        <Animated.View style={{
-          position: "absolute", width: 12, height: 12, borderRadius: 6,
-          backgroundColor: color, opacity: 0.25, transform: [{ scale: pulseAnim }],
-        }} />
-        <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: color }} />
-      </View>
-      <Text style={{ color, fontSize: 12, fontWeight: "700", letterSpacing: 0.3 }}>
-        {label}
-      </Text>
-    </View>
+    <>
+      <Animated.View
+        style={[
+          styles.pulseRing,
+          {
+            borderColor: color,
+            opacity: opacity1,
+            transform: [{ scale: ring1 }],
+          },
+        ]}
+      />
+      <Animated.View
+        style={[
+          styles.pulseRing,
+          {
+            borderColor: color,
+            opacity: opacity2,
+            transform: [{ scale: ring2 }],
+          },
+        ]}
+      />
+    </>
   );
-};
+}
 
-// ── Main screen ───────────────────────────────────────────────────────────────
+// ─── Status Dot ─────────────────────────────────────────────────────────────
+function StatusDot({ status }: { status: "connected" | "scanning" | "idle" }) {
+  const blink = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (status === "scanning") {
+      const anim = Animated.loop(
+        Animated.sequence([
+          Animated.timing(blink, {
+            toValue: 0.2,
+            duration: 500,
+            useNativeDriver: true,
+          }),
+          Animated.timing(blink, {
+            toValue: 1,
+            duration: 500,
+            useNativeDriver: true,
+          }),
+        ]),
+      );
+      anim.start();
+      return () => anim.stop();
+    } else {
+      blink.setValue(1);
+    }
+  }, [status]);
+  const color =
+    status === "connected"
+      ? "#22c55e"
+      : status === "scanning"
+        ? "#f59e0b"
+        : "#6b7280";
+  return (
+    <Animated.View
+      style={[styles.statusDot, { backgroundColor: color, opacity: blink }]}
+    />
+  );
+}
+
+// ─── Main Component ──────────────────────────────────────────────────────────
+type Mode = "manual" | "auto";
+
 export default function BleVoicePage() {
   // Recording state
   const [recording, setRecording] = useState<any>(null);
@@ -156,79 +208,82 @@ export default function BleVoicePage() {
   const [bleEnabled, setBleEnabled] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
-  const [bleWarning, setBleWarning] = useState("");
+  const [bleError, setBleError] = useState<string | null>(null);
 
   // Mode state
-  const [mode, setMode] = useState<"manual" | "auto">("manual");
+  const [mode, setMode] = useState<Mode>("manual");
   const [autoRunning, setAutoRunning] = useState(false);
 
   // Refs
-  const autoLoopRef = useRef(false);
   const connectedDeviceRef = useRef<any>(null);
   const isRecordingRef = useRef(false);
+  const autoLoopRef = useRef(false);
+  const recordingRef = useRef<any>(null);
 
-  // Keep isRecordingRef in sync
+  // Animation refs
+  const micScale = useRef(new Animated.Value(1)).current;
+  const resultOpacity = useRef(new Animated.Value(0)).current;
+  const resultTranslateY = useRef(new Animated.Value(16)).current;
+  const bleCardScale = useRef(new Animated.Value(1)).current;
+
   useEffect(() => {
     isRecordingRef.current = isRecording;
   }, [isRecording]);
-
-  // Animation refs
-  const pulse1 = useRef(new Animated.Value(0)).current;
-  const pulse2 = useRef(new Animated.Value(0)).current;
-  const pulse3 = useRef(new Animated.Value(0)).current;
-  const btnScale = useRef(new Animated.Value(1)).current;
-  const mountFade = useRef(new Animated.Value(0)).current;
-  const mountSlide = useRef(new Animated.Value(24)).current;
-  const resultFade = useRef(new Animated.Value(0)).current;
-  const resultSlide = useRef(new Animated.Value(16)).current;
-
-  // Mount animation
   useEffect(() => {
-    Animated.parallel([
-      Animated.timing(mountFade, { toValue: 1, duration: 550, useNativeDriver: true }),
-      Animated.spring(mountSlide, { toValue: 0, tension: 60, friction: 12, useNativeDriver: true }),
-    ]).start();
-  }, []);
+    recordingRef.current = recording;
+  }, [recording]);
 
-  // Pulse rings when recording
+  // Result animation
   useEffect(() => {
-    if (!isRecording) {
-      pulse1.setValue(0); pulse2.setValue(0); pulse3.setValue(0);
-      return;
+    if (translatedText) {
+      resultOpacity.setValue(0);
+      resultTranslateY.setValue(20);
+      Animated.parallel([
+        Animated.timing(resultOpacity, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+        Animated.spring(resultTranslateY, {
+          toValue: 0,
+          useNativeDriver: true,
+          friction: 7,
+        }),
+      ]).start();
     }
-    const make = (anim: Animated.Value, delay: number) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.delay(delay),
-          Animated.timing(anim, { toValue: 1, duration: 1400, useNativeDriver: true }),
-          Animated.timing(anim, { toValue: 0, duration: 0, useNativeDriver: true }),
-        ])
-      );
-    const a1 = make(pulse1, 0);
-    const a2 = make(pulse2, 420);
-    const a3 = make(pulse3, 840);
-    a1.start(); a2.start(); a3.start();
-    return () => { a1.stop(); a2.stop(); a3.stop(); };
-  }, [isRecording]);
+  }, [translatedText]);
 
-  // Result card animation
-  const animateResult = () => {
-    resultFade.setValue(0); resultSlide.setValue(16);
-    Animated.parallel([
-      Animated.timing(resultFade, { toValue: 1, duration: 400, useNativeDriver: true }),
-      Animated.spring(resultSlide, { toValue: 0, tension: 60, friction: 12, useNativeDriver: true }),
-    ]).start();
-  };
-
-  const animateBtn = (fn: () => void) => {
+  const animateMicPress = () => {
     Animated.sequence([
-      Animated.spring(btnScale, { toValue: 0.92, useNativeDriver: true }),
-      Animated.spring(btnScale, { toValue: 1, useNativeDriver: true }),
+      Animated.timing(micScale, {
+        toValue: 0.92,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.spring(micScale, {
+        toValue: 1,
+        useNativeDriver: true,
+        friction: 4,
+      }),
     ]).start();
-    fn();
   };
 
-  // ── BLE: Request permissions ───────────────────────────────────────────────
+  const animateBleCard = () => {
+    Animated.sequence([
+      Animated.timing(bleCardScale, {
+        toValue: 0.97,
+        duration: 80,
+        useNativeDriver: true,
+      }),
+      Animated.spring(bleCardScale, {
+        toValue: 1,
+        useNativeDriver: true,
+        friction: 5,
+      }),
+    ]).start();
+  };
+
+  // ─── Permissions ────────────────────────────────────────────────────────
   const requestPermissions = async () => {
     if (Platform.OS === "android") {
       await PermissionsAndroid.requestMultiple([
@@ -239,552 +294,807 @@ export default function BleVoicePage() {
     }
   };
 
-  // ── BLE: Scan and connect ─────────────────────────────────────────────────
+  // ─── BLE Listener ───────────────────────────────────────────────────────
+  const startBleListener = (device: any) => {
+    try {
+      if (bleSubscription) bleSubscription.remove();
+      bleSubscription = device.monitorCharacteristicForService(
+        SERVICE_UUID,
+        CHARACTERISTIC_UUID,
+        (err: any, characteristic: any) => {
+          if (err) return;
+          if (!characteristic?.value) return;
+          const value = atob(characteristic.value);
+          console.log("BLE:", value);
+          if (loading) return;
+          if (value === "START" && !isRecordingRef.current) startRecording();
+          if (value === "STOP" && isRecordingRef.current)
+            setTimeout(() => stopRecording(), 300);
+        },
+      );
+    } catch (e) {
+      console.log("BLE listener error:", e);
+    }
+  };
+
+  // ─── Scan + Connect ─────────────────────────────────────────────────────
   const scanAndConnect = (manager: any) => {
-    manager.startDeviceScan(null, null, (error: any, device: any) => {
-      if (error) {
-        console.log("Scan error:", error);
+    try {
+      manager.startDeviceScan(null, null, (error: any, device: any) => {
+        if (error) {
+          setIsScanning(false);
+          setBleEnabled(false);
+          setBleError("Scan failed: " + (error?.message || "Unknown error"));
+          return;
+        }
+        if (device?.name === "ESP32_Button") {
+          manager.stopDeviceScan();
+          device
+            .connect()
+            .then((d: any) => {
+              connectedDeviceRef.current = d;
+              setIsConnected(true);
+              setIsScanning(false);
+              setBleError(null);
+              return d.discoverAllServicesAndCharacteristics();
+            })
+            .then((d: any) => {
+              setTimeout(() => startBleListener(d), 800);
+            })
+            .catch((e: any) => {
+              setIsConnected(false);
+              setIsScanning(false);
+              setBleEnabled(false);
+              setBleError("Connection failed. Try again.");
+            });
+        }
+      });
+
+      setTimeout(() => {
+        try {
+          manager.stopDeviceScan();
+        } catch {}
         setIsScanning(false);
-        setBleEnabled(false);
+        if (!isConnected) {
+          setBleEnabled(false);
+          setBleError("Device not found. Make sure ESP32 is on.");
+        }
+      }, 8000);
+    } catch (e: any) {
+      setIsScanning(false);
+      setBleEnabled(false);
+      setBleError("BLE scan error: " + (e?.message || "Unknown"));
+    }
+  };
+
+  // ─── Connect BLE ────────────────────────────────────────────────────────
+  const handleConnectBle = async () => {
+    if (!isBleSupported) {
+      setBleError("BLE not supported on this device.");
+      return;
+    }
+    if (isScanning || isConnected) return;
+
+    try {
+      setBleError(null);
+      const manager = getBleManager();
+      if (!manager) {
+        setBleError("BLE not supported on this device.");
         return;
       }
-
-      if (device?.name === "ESP32_Button") {
-        manager.stopDeviceScan();
-        setIsScanning(false);
-
-        device
-          .connect()
-          .then((d: any) => {
-            connectedDeviceRef.current = d;
-            setIsConnected(true);
-            return d.discoverAllServicesAndCharacteristics();
-          })
-          .then((d: any) => {
-            d.monitorCharacteristicForService(
-              SERVICE_UUID,
-              CHARACTERISTIC_UUID,
-              (err: any, characteristic: any) => {
-                if (err) return;
-                if (!characteristic?.value) return;
-                const value = atob(characteristic.value);
-                console.log("BLE:", value);
-                if (value === "START" && !isRecordingRef.current) startRecording();
-                if (value === "STOP" && isRecordingRef.current) stopRecording();
-              }
-            );
-          })
-          .catch((err: any) => {
-            console.log("Connection failed:", err);
-            setIsConnected(false);
-            setBleEnabled(false);
-          });
-      }
-    });
-
-    // Auto-stop scan after 10s
-    setTimeout(() => {
-      try { manager.stopDeviceScan(); } catch {}
-      setIsScanning(false);
-    }, 10000);
-  };
-
-  // ── BLE: Connect button handler ───────────────────────────────────────────
-  const handleConnectBle = async () => {
-    if (!isBleAvailable()) {
-      setBleWarning("BLE not supported on this device");
-      return;
-    }
-
-    const manager = getBleManager();
-    if (!manager) {
-      setBleWarning("BLE not supported on this device");
-      return;
-    }
-
-    try {
-      setBleWarning("");
-      setBleEnabled(true);
       await requestPermissions();
+      const state = await manager.state();
+      if (state !== "PoweredOn") {
+        setBleError("Bluetooth is off. Please turn it on.");
+        return;
+      }
+      setBleEnabled(true);
       setIsScanning(true);
       scanAndConnect(manager);
-    } catch (e) {
-      console.log("BLE connect failed:", e);
+    } catch (e: any) {
       setBleEnabled(false);
       setIsScanning(false);
-      setBleWarning("BLE not supported on this device");
+      setBleError("BLE not supported on this device.");
     }
   };
 
-  // ── BLE: Disconnect ───────────────────────────────────────────────────────
+  // ─── Disconnect BLE ─────────────────────────────────────────────────────
   const handleDisconnectBle = async () => {
     try {
-      const manager = getBleManager();
-      if (manager) manager.stopDeviceScan();
+      stopAutoMode();
+      if (bleSubscription) bleSubscription.remove();
       if (connectedDeviceRef.current) {
         await connectedDeviceRef.current.cancelConnection();
-        connectedDeviceRef.current = null;
       }
     } catch {}
     setIsConnected(false);
     setBleEnabled(false);
-    setIsScanning(false);
-    stopAutoMode();
+    connectedDeviceRef.current = null;
   };
 
-  // ── RECORDING ─────────────────────────────────────────────────────────────
+  // ─── Recording ──────────────────────────────────────────────────────────
   const startRecording = async () => {
+    if (isRecordingRef.current || loading) return;
     try {
       const permission = await Audio.requestPermissionsAsync();
       if (!permission.granted) return;
-
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-      });
-
-      const { recording: rec } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY,
       );
-
-      setRecording(rec);
+      setRecording(recording);
       setIsRecording(true);
-    } catch (err) {
-      console.log(err);
+    } catch (e) {
+      console.log("startRecording error:", e);
     }
   };
 
-  const stopRecording = async (rec?: any) => {
+  const stopRecording = async (): Promise<string | null> => {
     try {
-      const activeRecording = rec || recording;
-      if (!activeRecording) return;
+      if (loading) return null;
+      const rec = recordingRef.current;
+      if (!rec) return null;
 
       setIsRecording(false);
       setLoading(true);
 
-      await activeRecording.stopAndUnloadAsync();
-      const uri = activeRecording.getURI();
+      await rec.stopAndUnloadAsync();
+      const uri = rec.getURI();
       setRecording(null);
 
-      if (!uri) { setLoading(false); return; }
-
       const formData = new FormData();
-      formData.append("audio", { uri, name: "audio.m4a", type: "audio/m4a" } as any);
+      formData.append("audio", {
+        uri,
+        name: "audio.m4a",
+        type: "audio/x-m4a",
+      } as any);
 
       const res = await fetch(`${VITE_URL}/translate`, {
         method: "POST",
         body: formData,
       });
-
       const data = await res.json();
-      setTranslatedText(data.translatedText || "");
-      if (data.translatedText) animateResult();
-    } catch (err) {
-      console.log(err);
+      const translated = data.translatedText || "";
+      setTranslatedText(translated);
+      return translated;
+    } catch (e) {
+      console.log("stopRecording error:", e);
+      return null;
     } finally {
       setLoading(false);
     }
   };
 
-  // ── AUTO MODE ─────────────────────────────────────────────────────────────
-  const runAutoLoop = useCallback(async () => {
-    while (autoLoopRef.current) {
-      try {
-        // Start recording
-        const permission = await Audio.requestPermissionsAsync();
-        if (!permission.granted) break;
-
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: true,
-          playsInSilentModeIOS: true,
-        });
-
-        const { recording: rec } = await Audio.Recording.createAsync(
-          Audio.RecordingOptionsPresets.HIGH_QUALITY
-        );
-        setRecording(rec);
-        setIsRecording(true);
-
-        // Record for 4 seconds
-        await new Promise<void>((resolve) => setTimeout(resolve, 4000));
-
-        if (!autoLoopRef.current) {
-          // Loop stopped mid-recording
-          setIsRecording(false);
-          try { await rec.stopAndUnloadAsync(); } catch {}
-          setRecording(null);
-          break;
-        }
-
-        // Stop and send
-        setIsRecording(false);
-        setLoading(true);
-        await rec.stopAndUnloadAsync();
-        const uri = rec.getURI();
-        setRecording(null);
-
-        if (uri && autoLoopRef.current) {
-          const formData = new FormData();
-          formData.append("audio", { uri, name: "audio.m4a", type: "audio/m4a" } as any);
-
-          const res = await fetch(`${VITE_URL}/translate`, { method: "POST", body: formData });
-          const data = await res.json();
-          setTranslatedText(data.translatedText || "");
-          if (data.translatedText) animateResult();
-        }
-
-        setLoading(false);
-      } catch (err) {
-        console.log("Auto loop error:", err);
-        setIsRecording(false);
-        setLoading(false);
-        setRecording(null);
-      }
-    }
-
-    setAutoRunning(false);
-    setIsRecording(false);
-    setLoading(false);
-  }, []);
-
-  const startAutoMode = () => {
-    if (autoLoopRef.current) return; // already running
+  // ─── Auto Mode ──────────────────────────────────────────────────────────
+  const startAutoMode = async () => {
+    if (!isConnected || autoLoopRef.current) return;
     autoLoopRef.current = true;
     setAutoRunning(true);
-    runAutoLoop();
+
+    const loop = async () => {
+      while (autoLoopRef.current) {
+        await startRecording();
+        await new Promise((r) => setTimeout(r, 4000));
+        if (!autoLoopRef.current) break;
+        await stopRecording();
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    };
+
+    loop();
   };
 
   const stopAutoMode = () => {
     autoLoopRef.current = false;
     setAutoRunning(false);
+    if (isRecordingRef.current) stopRecording();
   };
 
-  // ── UI ─────────────────────────────────────────────────────────────────────
-  const bleSupported = isBleAvailable();
+  // ─── Derived ────────────────────────────────────────────────────────────
+  const bleStatus: "connected" | "scanning" | "idle" = isConnected
+    ? "connected"
+    : isScanning
+      ? "scanning"
+      : "idle";
+  const bleLabel = isConnected
+    ? "Connected"
+    : isScanning
+      ? "Scanning…"
+      : "Disconnected";
+  const bleLabelColor = isConnected
+    ? "#22c55e"
+    : isScanning
+      ? "#f59e0b"
+      : "#6b7280";
+  const bleBlocked = !isBleSupported;
+  const featuresLocked = !isConnected;
 
   return (
-    <StyledSafeArea style={{ flex: 1, backgroundColor: "#070d1a" }}>
-
-      {/* Ambient blobs */}
-      <View style={{ position: "absolute", top: -80, left: -60, width: 280, height: 280, borderRadius: 140, backgroundColor: "#0ea5e9", opacity: 0.07 }} />
-      <View style={{ position: "absolute", bottom: 80, right: -80, width: 300, height: 300, borderRadius: 150, backgroundColor: "#6366f1", opacity: 0.06 }} />
-      <View style={{ position: "absolute", top: "40%", left: "30%", width: 200, height: 200, borderRadius: 100, backgroundColor: "#38bdf8", opacity: 0.04 }} />
+    <StyledSafeArea style={styles.safeArea}>
+      <View style={styles.bgGlow1} />
+      <View style={styles.bgGlow2} />
 
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 110, paddingTop: 8 }}
+        contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <Animated.View style={{ opacity: mountFade, transform: [{ translateY: mountSlide }] }}>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.headerEyebrow}>ESP32 DEVICE TAB</Text>
+          <Text style={styles.headerTitle}>Lan Vector</Text>
+        </View>
 
-          {/* ── Header ─────────────────────────────────────────── */}
-          <View style={{ alignItems: "center", marginBottom: 24, marginTop: 10 }}>
-            <Text style={{ color: "#f1f5f9", fontSize: 27, fontWeight: "800", letterSpacing: -0.6, textAlign: "center" }}>
-              BLE Voice Converter
+        {/* BLE Card */}
+        <Animated.View
+          style={[styles.bleCard, { transform: [{ scale: bleCardScale }] }]}
+        >
+          <View style={styles.bleStatusRow}>
+            <StatusDot status={bleStatus} />
+            <Text style={[styles.bleStatusLabel, { color: bleLabelColor }]}>
+              {bleLabel}
             </Text>
-            <Text style={{ color: "#334155", fontSize: 13, marginTop: 4, letterSpacing: 0.3, marginBottom: 14 }}>
-              Speak · Translate via ESP32
-            </Text>
-            <BlePill connected={isConnected} scanning={isScanning} />
           </View>
 
-          {/* ── BLE Warning ────────────────────────────────────── */}
-          {!!bleWarning && (
-            <View style={{
-              backgroundColor: "rgba(239,68,68,0.08)", borderRadius: 12,
-              borderWidth: 1, borderColor: "rgba(239,68,68,0.25)",
-              paddingHorizontal: 16, paddingVertical: 10, marginBottom: 16,
-              alignItems: "center",
-            }}>
-              <Text style={{ color: "#f87171", fontSize: 13, fontWeight: "600", textAlign: "center" }}>
-                ⚠ {bleWarning}
+          <Text style={styles.bleDeviceName}>ESP32_Button</Text>
+
+          {bleError && (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorText}>⚠ {bleError}</Text>
+            </View>
+          )}
+
+          {bleBlocked && (
+            <View style={styles.warningBanner}>
+              <Text style={styles.warningText}>
+                BLE not supported on this device
               </Text>
             </View>
           )}
 
-          {/* ── Connect BLE button ─────────────────────────────── */}
-          {!isConnected ? (
+          <View style={styles.bleButtonRow}>
             <TouchableOpacity
-              onPress={handleConnectBle}
-              disabled={!bleSupported || isScanning}
-              style={{
-                backgroundColor: bleSupported ? "rgba(14,165,233,0.12)" : "rgba(71,85,105,0.15)",
-                borderRadius: 14, borderWidth: 1,
-                borderColor: bleSupported ? "rgba(14,165,233,0.35)" : "rgba(71,85,105,0.3)",
-                paddingVertical: 14, paddingHorizontal: 20,
-                flexDirection: "row", alignItems: "center", justifyContent: "center",
-                gap: 10, marginBottom: 16, opacity: isScanning ? 0.6 : 1,
+              style={[
+                styles.bleActionBtn,
+                styles.bleConnectBtn,
+                (isScanning || isConnected || bleBlocked) &&
+                  styles.bleActionBtnDisabled,
+              ]}
+              onPress={() => {
+                animateBleCard();
+                handleConnectBle();
               }}
+              disabled={isScanning || isConnected || bleBlocked}
+              activeOpacity={0.75}
             >
-              {isScanning && <ActivityIndicator size="small" color="#38bdf8" />}
-              <Text style={{ color: bleSupported ? "#38bdf8" : "#475569", fontSize: 14, fontWeight: "700", letterSpacing: 0.4 }}>
-                {isScanning ? "Scanning for ESP32…" : bleSupported ? "📡 Connect BLE" : "BLE Not Supported"}
+              <Text style={styles.bleConnectText}>
+                {isScanning ? "Scanning…" : "Connect"}
               </Text>
             </TouchableOpacity>
-          ) : (
+
             <TouchableOpacity
-              onPress={handleDisconnectBle}
-              style={{
-                backgroundColor: "rgba(52,211,153,0.08)", borderRadius: 14,
-                borderWidth: 1, borderColor: "rgba(52,211,153,0.28)",
-                paddingVertical: 14, paddingHorizontal: 20,
-                flexDirection: "row", alignItems: "center", justifyContent: "center",
-                gap: 10, marginBottom: 16,
+              style={[
+                styles.bleActionBtn,
+                styles.bleDisconnectBtn,
+                !isConnected && styles.bleActionBtnDisabled,
+              ]}
+              onPress={() => {
+                animateBleCard();
+                handleDisconnectBle();
               }}
+              disabled={!isConnected}
+              activeOpacity={0.75}
             >
-              <Text style={{ color: "#34d399", fontSize: 14, fontWeight: "700", letterSpacing: 0.4 }}>
-                ✓ ESP32 Connected · Disconnect
+              <Text style={styles.bleDisconnectText}>Disconnect</Text>
+            </TouchableOpacity>
+          </View>
+        </Animated.View>
+
+        {/* Features locked notice */}
+        {featuresLocked && (
+          <View style={styles.lockedNotice}>
+            <Text style={styles.lockedNoticeText}>
+              Connect ESP32 to use device features
+            </Text>
+          </View>
+        )}
+
+        {/* Mode Toggle */}
+        <View
+          style={[
+            styles.modeToggleWrapper,
+            featuresLocked && styles.sectionLocked,
+          ]}
+        >
+          <Text style={styles.sectionLabel}>MODE</Text>
+          <View style={styles.modeToggle}>
+            <TouchableOpacity
+              style={[
+                styles.modeBtn,
+                mode === "manual" && styles.modeBtnActive,
+              ]}
+              onPress={() => {
+                if (!featuresLocked) setMode("manual");
+              }}
+              disabled={featuresLocked}
+              activeOpacity={0.8}
+            >
+              <Text
+                style={[
+                  styles.modeBtnText,
+                  mode === "manual" && styles.modeBtnTextActive,
+                ]}
+              >
+                Manual
+              </Text>
+              <Text
+                style={[
+                  styles.modeBtnSub,
+                  mode === "manual" && { color: "#c7d2fe" },
+                ]}
+              >
+                ESP32 Button
               </Text>
             </TouchableOpacity>
-          )}
 
-          {/* ── ESP32 device card ──────────────────────────────── */}
-          <View style={{
-            backgroundColor: "rgba(10,18,36,0.92)", borderRadius: 18,
-            borderWidth: 1, borderColor: isConnected ? "rgba(52,211,153,0.25)" : "rgba(30,58,82,0.6)",
-            padding: 16, marginBottom: 20, flexDirection: "row", alignItems: "center", gap: 14,
-            shadowColor: isConnected ? "#34d399" : "#000",
-            shadowOffset: { width: 0, height: 0 },
-            shadowOpacity: isConnected ? 0.18 : 0.1,
-            shadowRadius: 14,
-          }}>
-            <View style={{
-              width: 48, height: 48, borderRadius: 14,
-              backgroundColor: isConnected ? "rgba(52,211,153,0.1)" : "rgba(71,85,105,0.2)",
-              borderWidth: 1, borderColor: isConnected ? "rgba(52,211,153,0.3)" : "rgba(71,85,105,0.3)",
-              alignItems: "center", justifyContent: "center",
-            }}>
-              <Text style={{ fontSize: 22 }}>📡</Text>
-            </View>
-
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: "#f1f5f9", fontSize: 14, fontWeight: "700", marginBottom: 2 }}>
-                ESP32_Button
-              </Text>
-              <Text style={{ color: isConnected ? "#34d399" : "#475569", fontSize: 12 }}>
-                {isConnected
-                  ? "BLE connected · hardware trigger active"
-                  : isScanning
-                  ? "Scanning for device…"
-                  : "Not connected · press Connect BLE above"}
-              </Text>
-            </View>
-
-            <View style={{
-              width: 10, height: 10, borderRadius: 5,
-              backgroundColor: isConnected ? "#34d399" : isScanning ? "#facc15" : "#334155",
-              shadowColor: isConnected ? "#34d399" : "#facc15",
-              shadowOffset: { width: 0, height: 0 },
-              shadowOpacity: isConnected || isScanning ? 0.8 : 0,
-              shadowRadius: 6,
-            }} />
-          </View>
-
-          {/* ── BLE required message ───────────────────────────── */}
-          {!isConnected && (
-            <View style={{
-              backgroundColor: "rgba(71,85,105,0.1)", borderRadius: 12,
-              borderWidth: 1, borderColor: "rgba(71,85,105,0.25)",
-              paddingHorizontal: 16, paddingVertical: 10, marginBottom: 20,
-              alignItems: "center",
-            }}>
-              <Text style={{ color: "#64748b", fontSize: 13, textAlign: "center" }}>
-                Connect ESP32 to use device features
-              </Text>
-            </View>
-          )}
-
-          {/* ── Mode toggle (only when connected) ─────────────── */}
-          {isConnected && (
-            <View style={{
-              flexDirection: "row", backgroundColor: "rgba(10,18,36,0.92)",
-              borderRadius: 14, borderWidth: 1, borderColor: "rgba(30,58,82,0.6)",
-              padding: 4, marginBottom: 20,
-            }}>
-              <TouchableOpacity
-                onPress={() => { stopAutoMode(); setMode("manual"); }}
-                style={{
-                  flex: 1, paddingVertical: 10, borderRadius: 11, alignItems: "center",
-                  backgroundColor: mode === "manual" ? "rgba(14,165,233,0.18)" : "transparent",
-                  borderWidth: mode === "manual" ? 1 : 0,
-                  borderColor: "rgba(14,165,233,0.35)",
-                }}
+            <TouchableOpacity
+              style={[styles.modeBtn, mode === "auto" && styles.modeBtnActive]}
+              onPress={() => {
+                if (!featuresLocked) {
+                  setMode("auto");
+                  stopAutoMode();
+                }
+              }}
+              disabled={featuresLocked}
+              activeOpacity={0.8}
+            >
+              <Text
+                style={[
+                  styles.modeBtnText,
+                  mode === "auto" && styles.modeBtnTextActive,
+                ]}
               >
-                <Text style={{ color: mode === "manual" ? "#38bdf8" : "#475569", fontSize: 13, fontWeight: "700" }}>
-                  Manual (ESP32 Button)
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => setMode("auto")}
-                style={{
-                  flex: 1, paddingVertical: 10, borderRadius: 11, alignItems: "center",
-                  backgroundColor: mode === "auto" ? "rgba(99,102,241,0.18)" : "transparent",
-                  borderWidth: mode === "auto" ? 1 : 0,
-                  borderColor: "rgba(99,102,241,0.35)",
-                }}
+                Auto
+              </Text>
+              <Text
+                style={[
+                  styles.modeBtnSub,
+                  mode === "auto" && { color: "#c7d2fe" },
+                ]}
               >
-                <Text style={{ color: mode === "auto" ? "#818cf8" : "#475569", fontSize: 13, fontWeight: "700" }}>
-                  Auto (Continuous)
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* ── Waveform ───────────────────────────────────────── */}
-          <View style={{ alignItems: "center", marginBottom: 22 }}>
-            <Waveform isActive={isRecording} />
+                Continuous
+              </Text>
+            </TouchableOpacity>
           </View>
+        </View>
 
-          {/* ── Manual mode: record button ─────────────────────── */}
-          {(!isConnected || mode === "manual") && (
-            <View style={{ alignItems: "center", marginBottom: 30 }}>
-              <View style={{ alignItems: "center", justifyContent: "center" }}>
-                <PulseRing anim={pulse1} color={isRecording ? "#ef4444" : "#38bdf8"} />
-                <PulseRing anim={pulse2} color={isRecording ? "#ef4444" : "#38bdf8"} />
-                <PulseRing anim={pulse3} color={isRecording ? "#ef4444" : "#38bdf8"} />
-
-                <Animated.View style={{ transform: [{ scale: btnScale }] }}>
+        {/* Mic / Control Section */}
+        <View
+          style={[styles.micSection, featuresLocked && styles.sectionLocked]}
+        >
+          {mode === "manual" ? (
+            <>
+              <Text style={styles.micStateLabel}>
+                {isRecording ? "● RECORDING" : "WAITING FOR ESP32"}
+              </Text>
+              <View style={styles.micContainer}>
+                <PulseRing active={isRecording} color="#ef4444" />
+                <Animated.View style={{ transform: [{ scale: micScale }] }}>
                   <TouchableOpacity
+                    style={[
+                      styles.micButton,
+                      isRecording && styles.micButtonActive,
+                    ]}
                     onPress={() => {
-                      if (!isConnected) return;
-                      animateBtn(isRecording ? () => stopRecording() : startRecording);
+                      if (featuresLocked) return;
+                      animateMicPress();
+                      isRecording ? stopRecording() : startRecording();
                     }}
-                    activeOpacity={isConnected ? 0.85 : 1}
-                    style={{
-                      width: 90, height: 90, borderRadius: 45,
-                      alignItems: "center", justifyContent: "center",
-                      backgroundColor: !isConnected
-                        ? "#1e293b"
-                        : isRecording ? "#dc2626" : "#0284c7",
-                      shadowColor: isRecording ? "#ef4444" : "#38bdf8",
-                      shadowOffset: { width: 0, height: 0 },
-                      shadowOpacity: isConnected ? 0.65 : 0,
-                      shadowRadius: 26,
-                      borderWidth: 1.5,
-                      borderColor: !isConnected
-                        ? "rgba(71,85,105,0.3)"
-                        : isRecording ? "rgba(239,68,68,0.35)" : "rgba(56,189,248,0.35)",
-                      opacity: isConnected ? 1 : 0.4,
-                    }}
+                    activeOpacity={0.85}
                   >
-                    <View style={{ position: "absolute", width: 78, height: 78, borderRadius: 39, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" }} />
-                    {isRecording ? <StopIcon /> : <MicIcon />}
+                    <View style={styles.micIconWrapper}>
+                      <View
+                        style={[
+                          styles.micIconBody,
+                          isRecording && { backgroundColor: "#fff" },
+                        ]}
+                      />
+                      <View
+                        style={[
+                          styles.micIconStand,
+                          isRecording && { borderColor: "#fff" },
+                        ]}
+                      />
+                      <View
+                        style={[
+                          styles.micIconBase,
+                          isRecording && { backgroundColor: "#fff" },
+                        ]}
+                      />
+                    </View>
                   </TouchableOpacity>
                 </Animated.View>
               </View>
-
-              <Text style={{
-                color: !isConnected ? "#334155" : isRecording ? "#f87171" : "#38bdf8",
-                fontSize: 11, fontWeight: "700", letterSpacing: 2.5,
-                textTransform: "uppercase", marginTop: 18,
-              }}>
-                {!isConnected
-                  ? "Connect ESP32 First"
-                  : isRecording
-                  ? "● Recording…"
-                  : "Press ESP32 Button"}
+              <Text style={styles.micHint}>
+                {isRecording
+                  ? "Recording via ESP32 button…"
+                  : "Press ESP32 button to record"}
               </Text>
-            </View>
-          )}
-
-          {/* ── Auto mode controls ─────────────────────────────── */}
-          {isConnected && mode === "auto" && (
-            <View style={{ alignItems: "center", marginBottom: 30, gap: 16 }}>
-              {/* Pulse rings for auto */}
-              <View style={{ alignItems: "center", justifyContent: "center" }}>
-                <PulseRing anim={pulse1} color={isRecording ? "#ef4444" : "#818cf8"} />
-                <PulseRing anim={pulse2} color={isRecording ? "#ef4444" : "#818cf8"} />
-                <PulseRing anim={pulse3} color={isRecording ? "#ef4444" : "#818cf8"} />
-
-                <TouchableOpacity
-                  onPress={autoRunning ? stopAutoMode : startAutoMode}
-                  style={{
-                    width: 90, height: 90, borderRadius: 45,
-                    alignItems: "center", justifyContent: "center",
-                    backgroundColor: autoRunning ? "#dc2626" : "#4f46e5",
-                    shadowColor: autoRunning ? "#ef4444" : "#818cf8",
-                    shadowOffset: { width: 0, height: 0 },
-                    shadowOpacity: 0.65, shadowRadius: 26,
-                    borderWidth: 1.5,
-                    borderColor: autoRunning ? "rgba(239,68,68,0.35)" : "rgba(129,140,248,0.35)",
-                  }}
-                >
-                  <View style={{ position: "absolute", width: 78, height: 78, borderRadius: 39, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" }} />
-                  {autoRunning ? <StopIcon /> : <MicIcon />}
-                </TouchableOpacity>
-              </View>
-
-              <Text style={{
-                color: autoRunning ? "#f87171" : "#818cf8",
-                fontSize: 11, fontWeight: "700", letterSpacing: 2.5,
-                textTransform: "uppercase",
-              }}>
+            </>
+          ) : (
+            <>
+              <Text style={styles.micStateLabel}>
                 {autoRunning
-                  ? isRecording ? "● Recording…" : "● Processing…"
-                  : "Start Auto Mode"}
+                  ? isRecording
+                    ? "● RECORDING"
+                    : "⟳ PROCESSING"
+                  : "AUTO MODE"}
               </Text>
-
-              {autoRunning && (
-                <View style={{
-                  backgroundColor: "rgba(99,102,241,0.08)", borderRadius: 12,
-                  borderWidth: 1, borderColor: "rgba(99,102,241,0.2)",
-                  paddingHorizontal: 16, paddingVertical: 8,
-                }}>
-                  <Text style={{ color: "#818cf8", fontSize: 12, textAlign: "center" }}>
-                    Auto translating every 4 seconds · Tap stop to end
-                  </Text>
-                </View>
-              )}
-            </View>
-          )}
-
-          {/* ── Loading ────────────────────────────────────────── */}
-          {loading && (
-            <View style={{ alignItems: "center", marginBottom: 22 }}>
-              <View style={{
-                flexDirection: "row", alignItems: "center", gap: 9,
-                backgroundColor: "rgba(56,189,248,0.07)", paddingHorizontal: 18,
-                paddingVertical: 11, borderRadius: 100,
-                borderWidth: 1, borderColor: "rgba(56,189,248,0.18)",
-              }}>
-                <ActivityIndicator size="small" color="#38bdf8" />
-                <Text style={{ color: "#38bdf8", fontSize: 13, fontWeight: "600", letterSpacing: 0.4 }}>
-                  Processing translation…
-                </Text>
+              <View style={styles.micContainer}>
+                <PulseRing
+                  active={autoRunning}
+                  color={isRecording ? "#ef4444" : "#818cf8"}
+                />
+                <Animated.View style={{ transform: [{ scale: micScale }] }}>
+                  <TouchableOpacity
+                    style={[
+                      styles.micButton,
+                      autoRunning &&
+                        (isRecording
+                          ? styles.micButtonActive
+                          : styles.micButtonProcessing),
+                    ]}
+                    onPress={() => {
+                      if (featuresLocked) return;
+                      animateMicPress();
+                      autoRunning ? stopAutoMode() : startAutoMode();
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <View style={styles.micIconWrapper}>
+                      {autoRunning ? (
+                        <View style={styles.autoStopIcon} />
+                      ) : (
+                        <>
+                          <View style={styles.micIconBody} />
+                          <View style={styles.micIconStand} />
+                          <View style={styles.micIconBase} />
+                        </>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                </Animated.View>
               </View>
+              <Text style={styles.micHint}>
+                {autoRunning
+                  ? "Tap to stop auto translation"
+                  : "Tap to start continuous recording (4s loops)"}
+              </Text>
+            </>
+          )}
+        </View>
+
+        {/* Loading */}
+        {loading && (
+          <View style={styles.loadingCard}>
+            <ActivityIndicator size="small" color="#818cf8" />
+            <Text style={styles.loadingText}>Processing…</Text>
+          </View>
+        )}
+
+        {/* Result */}
+        {!!translatedText && !loading && (
+          <Animated.View
+            style={[
+              styles.resultCard,
+              {
+                opacity: resultOpacity,
+                transform: [{ translateY: resultTranslateY }],
+              },
+            ]}
+          >
+            <View style={styles.resultHeader}>
+              <View style={styles.resultDot} />
+              <Text style={styles.resultHeaderText}>Translation</Text>
             </View>
-          )}
+            <Text style={styles.resultText}>{translatedText}</Text>
+          </Animated.View>
+        )}
 
-          {/* ── Result card ────────────────────────────────────── */}
-          {!!translatedText && (
-            <Animated.View style={{
-              opacity: resultFade,
-              transform: [{ translateY: resultSlide }],
-              backgroundColor: "rgba(10,18,36,0.92)",
-              borderRadius: 22, borderWidth: 1,
-              borderColor: "rgba(56,189,248,0.14)",
-              overflow: "hidden",
-              shadowColor: "#000",
-              shadowOffset: { width: 0, height: 10 },
-              shadowOpacity: 0.35, shadowRadius: 22,
-            }}>
-              <View style={{ height: 2.5, backgroundColor: "#0ea5e9", opacity: 0.55 }} />
-              <View style={{ padding: 20 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 7, marginBottom: 10 }}>
-                  <View style={{ width: 3.5, height: 13, borderRadius: 2, backgroundColor: "#38bdf8" }} />
-                  <Text style={{ color: "#38bdf8", fontSize: 10, fontWeight: "700", letterSpacing: 2.5, textTransform: "uppercase" }}>
-                    Translated
-                  </Text>
-                </View>
-                <Text style={{ color: "#f1f5f9", fontSize: 16, lineHeight: 25, fontWeight: "500" }}>
-                  {translatedText}
-                </Text>
-              </View>
-            </Animated.View>
-          )}
-
-        </Animated.View>
+        <View style={{ height: 40 }} />
       </ScrollView>
     </StyledSafeArea>
   );
 }
+
+// ─── Styles ──────────────────────────────────────────────────────────────────
+const CARD_RADIUS = 20;
+
+const styles = StyleSheet.create({
+  safeArea: { flex: 1, backgroundColor: "#080b12" },
+  bgGlow1: {
+    position: "absolute",
+    width: 340,
+    height: 340,
+    borderRadius: 170,
+    backgroundColor: "#1e1b4b",
+    top: -100,
+    right: -80,
+    opacity: 0.55,
+  },
+  bgGlow2: {
+    position: "absolute",
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: "#0f172a",
+    bottom: 60,
+    left: -60,
+    opacity: 0.7,
+  },
+  scrollContent: { paddingHorizontal: 22, paddingTop: 12, paddingBottom: 20 },
+
+  // Header
+  header: { marginBottom: 28, marginTop: 8 },
+  headerEyebrow: {
+    fontSize: 11,
+    letterSpacing: 3.5,
+    color: "#4f46e5",
+    fontWeight: "700",
+    marginBottom: 4,
+  },
+  headerTitle: {
+    fontSize: 36,
+    fontWeight: "800",
+    color: "#f8fafc",
+    letterSpacing: -0.5,
+  },
+
+  // BLE card
+  bleCard: {
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderRadius: CARD_RADIUS,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    marginBottom: 16,
+  },
+  bleStatusRow: { flexDirection: "row", alignItems: "center", marginBottom: 4 },
+  statusDot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
+  bleStatusLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    letterSpacing: 1,
+    textTransform: "uppercase",
+  },
+  bleDeviceName: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#f1f5f9",
+    marginBottom: 12,
+    letterSpacing: 0.2,
+  },
+  bleButtonRow: { flexDirection: "row", gap: 10 },
+  bleActionBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  bleActionBtnDisabled: { opacity: 0.4 },
+  bleConnectBtn: { backgroundColor: "#4f46e5" },
+  bleConnectText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 14,
+    letterSpacing: 0.3,
+  },
+  bleDisconnectBtn: {
+    backgroundColor: "rgba(239,68,68,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.3)",
+  },
+  bleDisconnectText: { color: "#f87171", fontWeight: "700", fontSize: 14 },
+
+  // Banners
+  errorBanner: {
+    backgroundColor: "rgba(239,68,68,0.1)",
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.2)",
+  },
+  errorText: { color: "#f87171", fontSize: 13 },
+  warningBanner: {
+    backgroundColor: "rgba(245,158,11,0.1)",
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "rgba(245,158,11,0.2)",
+  },
+  warningText: { color: "#fbbf24", fontSize: 13 },
+
+  // Locked notice
+  lockedNotice: {
+    backgroundColor: "rgba(255,255,255,0.03)",
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.06)",
+    alignItems: "center",
+  },
+  lockedNoticeText: { color: "#475569", fontSize: 13, letterSpacing: 0.2 },
+
+  // Section locked fade
+  sectionLocked: { opacity: 0.38 },
+
+  // Mode toggle
+  modeToggleWrapper: { marginBottom: 28 },
+  sectionLabel: {
+    fontSize: 11,
+    letterSpacing: 3,
+    color: "#64748b",
+    fontWeight: "700",
+    marginBottom: 10,
+  },
+  modeToggle: {
+    flexDirection: "row",
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderRadius: 14,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.07)",
+  },
+  modeBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 11,
+    alignItems: "center",
+  },
+  modeBtnActive: { backgroundColor: "#4f46e5" },
+  modeBtnText: { color: "#64748b", fontWeight: "700", fontSize: 14 },
+  modeBtnTextActive: { color: "#fff" },
+  modeBtnSub: {
+    color: "#475569",
+    fontSize: 10,
+    marginTop: 2,
+    letterSpacing: 0.3,
+  },
+
+  // Mic
+  micSection: { alignItems: "center", marginBottom: 32 },
+  micStateLabel: {
+    fontSize: 11,
+    letterSpacing: 3,
+    color: "#64748b",
+    fontWeight: "700",
+    marginBottom: 28,
+  },
+  micContainer: {
+    width: 140,
+    height: 140,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 20,
+  },
+  pulseRing: {
+    position: "absolute",
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    borderWidth: 2,
+  },
+  micButton: {
+    width: 112,
+    height: 112,
+    borderRadius: 56,
+    backgroundColor: "rgba(79,70,229,0.15)",
+    borderWidth: 2,
+    borderColor: "rgba(79,70,229,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  micButtonActive: {
+    backgroundColor: "rgba(239,68,68,0.18)",
+    borderColor: "rgba(239,68,68,0.6)",
+  },
+  micButtonProcessing: {
+    backgroundColor: "rgba(129,140,248,0.18)",
+    borderColor: "rgba(129,140,248,0.5)",
+  },
+  micIconWrapper: { alignItems: "center", justifyContent: "center" },
+  micIconBody: {
+    width: 22,
+    height: 34,
+    borderRadius: 11,
+    backgroundColor: "#818cf8",
+    marginBottom: 4,
+  },
+  micIconStand: {
+    width: 36,
+    height: 18,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    borderWidth: 2.5,
+    borderBottomWidth: 0,
+    borderColor: "#818cf8",
+    marginBottom: 3,
+  },
+  micIconBase: {
+    width: 2.5,
+    height: 7,
+    backgroundColor: "#818cf8",
+    borderRadius: 2,
+  },
+  autoStopIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 5,
+    backgroundColor: "#fff",
+  },
+  micHint: {
+    fontSize: 13,
+    color: "#475569",
+    letterSpacing: 0.2,
+    textAlign: "center",
+    paddingHorizontal: 20,
+  },
+
+  // Loading
+  loadingCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(129,140,248,0.08)",
+    borderRadius: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    borderWidth: 1,
+    borderColor: "rgba(129,140,248,0.15)",
+    gap: 12,
+    marginBottom: 24,
+  },
+  loadingText: {
+    color: "#818cf8",
+    fontSize: 14,
+    fontWeight: "600",
+    letterSpacing: 0.5,
+  },
+
+  // Result
+  resultCard: {
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderRadius: CARD_RADIUS,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.09)",
+  },
+  resultHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  resultDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#22c55e",
+    marginRight: 8,
+  },
+  resultHeaderText: {
+    fontSize: 11,
+    letterSpacing: 2.5,
+    color: "#22c55e",
+    fontWeight: "700",
+    textTransform: "uppercase",
+  },
+  resultText: {
+    fontSize: 17,
+    color: "#f1f5f9",
+    lineHeight: 26,
+    fontWeight: "400",
+    letterSpacing: 0.1,
+  },
+});

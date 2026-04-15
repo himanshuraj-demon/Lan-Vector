@@ -7,7 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "lanvector",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
 
     "ios": {
       "supportsTablet": true
@@ -17,6 +16,7 @@
       "package": "com.himanshu.raj.LANVECTOR",
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
+      "usesCleartextTraffic": true,
 
       "permissions": [
         "BLUETOOTH",
@@ -41,7 +41,7 @@
 
     "plugins": [
       "expo-router",
-
+      "react-native-ble-plx",
       [
         "expo-splash-screen",
         {
@@ -53,10 +53,7 @@
             "backgroundColor": "#000000"
           }
         }
-      ],
-
-      // 🔥 ADD THIS (VERY IMPORTANT)
-      "react-native-ble-plx"
+      ]
     ],
 
     "experiments": {
