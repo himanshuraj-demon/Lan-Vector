@@ -11,7 +11,7 @@ import { styled } from "nativewind";
 
 const StyledSafeArea = styled(SafeAreaView);
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
-
+console.log("API URL:", process.env.EXPO_PUBLIC_API_URL);
 // ── Tiny animated pulse dot ───────────────────────────────────────────────────
 const PulseDot = ({ color }: { color: string }) => {
   const anim = useRef(new Animated.Value(1)).current;
