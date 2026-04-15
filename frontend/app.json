@@ -19,6 +19,7 @@
       "usesCleartextTraffic": true,
 
       "permissions": [
+        "INTERNET",
         "BLUETOOTH",
         "BLUETOOTH_ADMIN",
         "BLUETOOTH_SCAN",
