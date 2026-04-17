@@ -22,6 +22,17 @@ const SERVICE_UUID = "12345678-1234-1234-1234-123456789abc";
 const CHARACTERISTIC_UUID = "abcd1234-5678-1234-5678-123456789abc";
 const VITE_URL = process.env.EXPO_PUBLIC_API_URL;
 
+const LANGUAGES = [
+  { code: "en", name: "English" },
+  { code: "hi", name: "Hindi" },
+  { code: "gu", name: "Gujarati" },
+  { code: "fr", name: "French" },
+  { code: "es", name: "Spanish" },
+  { code: "de", name: "German" },
+  { code: "ja", name: "Japanese" },
+  { code: "ko", name: "Korean" },
+  { code: "mr", name: "Marathi" },
+];
 // ─── Safe BLE import ────────────────────────────────────────────────────────
 let BleManager: any = null;
 let isBleSupported = false;
@@ -205,6 +216,7 @@ export default function BleVoicePage() {
   const [translatedText, setTranslatedText] = useState("");
 
   // BLE state
+  const [language, setLanguage] = useState("en");
   const [bleEnabled, setBleEnabled] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
@@ -447,6 +459,7 @@ export default function BleVoicePage() {
         name: "audio.m4a",
         type: "audio/x-m4a",
       } as any);
+      formData.append("language", language || "en");
 
       const res = await fetch(`${VITE_URL}/translate`, {
         method: "POST",
@@ -596,6 +609,44 @@ export default function BleVoicePage() {
             </Text>
           </View>
         )}
+
+        {/* Language Selector */}
+<View style={{ marginBottom: 20 }}>
+  <Text style={styles.sectionLabel}>LANGUAGE</Text>
+
+  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+    {LANGUAGES.map((lang) => (
+      <TouchableOpacity
+        key={lang.code}
+        onPress={() => setLanguage(lang.code)}
+        style={{
+          paddingVertical: 8,
+          paddingHorizontal: 14,
+          marginRight: 10,
+          borderRadius: 12,
+          backgroundColor:
+            language === lang.code
+              ? "#4f46e5"
+              : "rgba(255,255,255,0.05)",
+          borderWidth: 1,
+          borderColor:
+            language === lang.code
+              ? "#4f46e5"
+              : "rgba(255,255,255,0.1)",
+        }}
+      >
+        <Text
+          style={{
+            color: language === lang.code ? "#fff" : "#94a3b8",
+            fontWeight: "600",
+          }}
+        >
+          {lang.name}
+        </Text>
+      </TouchableOpacity>
+    ))}
+  </ScrollView>
+</View>
 
         {/* Mode Toggle */}
         <View
