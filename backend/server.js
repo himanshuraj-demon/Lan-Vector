@@ -6,6 +6,13 @@ import OpenAI from "openai";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 import "dotenv/config";
+import { v2 as cloudinary } from "cloudinary";
+
+cloudinary.config({
+  cloud_name: process.env.CLOUD_NAME,
+  api_key: process.env.API_KEY,
+  api_secret: process.env.API_SECRET
+});
 
 const app = express();
 
@@ -23,6 +30,28 @@ ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+async function uploadToCloudinary(audioBuffer) {
+  const tempPath = `uploads/temp_${Date.now()}_${Math.floor(Math.random() * 10000)}.mp3`;
+  try {
+    fs.writeFileSync(tempPath, audioBuffer);
+    const result = await cloudinary.uploader.upload(tempPath, {
+      resource_type: "video",
+      timeout: 60000
+    });
+    return result.secure_url;
+  } catch (err) {
+    console.error("Cloudinary upload error:", err.message);
+    return null;
+  } finally {
+    if (fs.existsSync(tempPath)) {
+      fs.unlinkSync(tempPath);
+    }
+  }
+}
+
+app.get("/",(req,res)=>{
+  res.json({working:true});
+});
 // ─────────────────────────────────────────────────────────────────────────────
 // HEALTH
 // ─────────────────────────────────────────────────────────────────────────────
@@ -88,13 +117,14 @@ Text: ${text}`,
       voice: "alloy",
       input: translatedText,
     });
-
     const audioBuffer = Buffer.from(await speech.arrayBuffer());
+    const audioUrl = await uploadToCloudinary(audioBuffer) || "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
 
     res.json({
       text,
       translatedText,
       audioBase64: audioBuffer.toString("base64"),
+      ...(audioUrl && { audioUrl }),
     });
   } catch (err) {
     console.error("ERROR /translate:", err);
@@ -153,10 +183,12 @@ Text: ${text.trim()}`,
     });
 
     const audioBuffer = Buffer.from(await speech.arrayBuffer());
+    const audioUrl = await uploadToCloudinary(audioBuffer) || "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
 
     res.json({
       translatedText,
       audioBase64: audioBuffer.toString("base64"),
+      ...(audioUrl && { audioUrl }),
     });
   } catch (err) {
     console.error("ERROR /translate-text:", err);

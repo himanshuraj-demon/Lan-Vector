@@ -205,6 +205,70 @@ function StatusDot({ status }: { status: "connected" | "scanning" | "idle" }) {
   );
 }
 
+// ─── Speaker Icon ────────────────────────────────────────────────────────────
+function SpeakerIcon({ color = "#22c55e" }: { color?: string }) {
+  return (
+    <View
+      style={{
+        width: 20,
+        height: 20,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <View style={{ flexDirection: "row", alignItems: "center" }}>
+        <View
+          style={{
+            width: 5,
+            height: 10,
+            backgroundColor: color,
+            borderRadius: 1,
+            marginRight: 2,
+          }}
+        />
+        <View
+          style={{
+            width: 8,
+            height: 14,
+            borderTopRightRadius: 7,
+            borderBottomRightRadius: 7,
+            borderTopLeftRadius: 2,
+            borderBottomLeftRadius: 2,
+            backgroundColor: color,
+            marginRight: 2,
+          }}
+        />
+        <View style={{ gap: 3 }}>
+          <View
+            style={{
+              width: 4,
+              height: 1.5,
+              backgroundColor: color,
+              borderRadius: 1,
+            }}
+          />
+          <View
+            style={{
+              width: 5,
+              height: 1.5,
+              backgroundColor: color,
+              borderRadius: 1,
+            }}
+          />
+          <View
+            style={{
+              width: 4,
+              height: 1.5,
+              backgroundColor: color,
+              borderRadius: 1,
+            }}
+          />
+        </View>
+      </View>
+    </View>
+  );
+}
+
 // ─── Main Component ──────────────────────────────────────────────────────────
 type Mode = "manual" | "auto";
 
@@ -214,6 +278,12 @@ export default function BleVoicePage() {
   const [isRecording, setIsRecording] = useState(false);
   const [loading, setLoading] = useState(false);
   const [translatedText, setTranslatedText] = useState("");
+
+  // Audio playback state
+  const [audioUrl, setAudioUrl] = useState<string>("");
+  const [sound, setSound] = useState<Audio.Sound | null>(null);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const soundRef = useRef<Audio.Sound | null>(null);
 
   // BLE state
   const [language, setLanguage] = useState("en");
@@ -244,6 +314,15 @@ export default function BleVoicePage() {
   useEffect(() => {
     recordingRef.current = recording;
   }, [recording]);
+
+  // Cleanup sound on unmount
+  useEffect(() => {
+    return () => {
+      if (soundRef.current) {
+        soundRef.current.unloadAsync().catch(() => {});
+      }
+    };
+  }, []);
 
   // Result animation
   useEffect(() => {
@@ -293,6 +372,48 @@ export default function BleVoicePage() {
         friction: 5,
       }),
     ]).start();
+  };
+
+  // ─── Play Translated Audio ───────────────────────────────────────────────
+  const playTranslatedAudio = async (url: string) => {
+    if (!url) return;
+    try {
+      // Unload previous sound if exists
+      if (soundRef.current) {
+        await soundRef.current.stopAsync().catch(() => {});
+        await soundRef.current.unloadAsync().catch(() => {});
+        soundRef.current = null;
+        setSound(null);
+        setIsPlayingAudio(false);
+      }
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+      });
+
+      const { sound: newSound } = await Audio.Sound.createAsync(
+        { uri: url },
+        { shouldPlay: true },
+      );
+
+      soundRef.current = newSound;
+      setSound(newSound);
+      setIsPlayingAudio(true);
+
+      newSound.setOnPlaybackStatusUpdate((status: any) => {
+        if (status.didJustFinish) {
+          setIsPlayingAudio(false);
+          newSound.unloadAsync().catch(() => {});
+          soundRef.current = null;
+          setSound(null);
+        }
+      });
+    } catch (e) {
+      console.log("Audio playback error:", e);
+      setIsPlayingAudio(false);
+    }
   };
 
   // ─── Permissions ────────────────────────────────────────────────────────
@@ -430,6 +551,12 @@ export default function BleVoicePage() {
     try {
       const permission = await Audio.requestPermissionsAsync();
       if (!permission.granted) return;
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
       const { recording } = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY,
       );
@@ -467,7 +594,27 @@ export default function BleVoicePage() {
       });
       const data = await res.json();
       const translated = data.translatedText || "";
+      const receivedAudioUrl = data.audioUrl || "";
+      console.log("🎧 Audio URL from backend:", receivedAudioUrl);
+
       setTranslatedText(translated);
+
+      if (receivedAudioUrl) {
+        setAudioUrl(receivedAudioUrl);
+        await playTranslatedAudio(receivedAudioUrl);
+        if (receivedAudioUrl && connectedDeviceRef.current) {
+          const message = "PLAY:" + receivedAudioUrl;
+
+          const base64 = btoa(message);
+
+          await connectedDeviceRef.current.writeCharacteristicWithResponseForService(
+            SERVICE_UUID,
+            CHARACTERISTIC_UUID,
+            base64,
+          );
+        }
+      }
+
       return translated;
     } catch (e) {
       console.log("stopRecording error:", e);
@@ -611,42 +758,42 @@ export default function BleVoicePage() {
         )}
 
         {/* Language Selector */}
-<View style={{ marginBottom: 20 }}>
-  <Text style={styles.sectionLabel}>LANGUAGE</Text>
+        <View style={{ marginBottom: 20 }}>
+          <Text style={styles.sectionLabel}>LANGUAGE</Text>
 
-  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-    {LANGUAGES.map((lang) => (
-      <TouchableOpacity
-        key={lang.code}
-        onPress={() => setLanguage(lang.code)}
-        style={{
-          paddingVertical: 8,
-          paddingHorizontal: 14,
-          marginRight: 10,
-          borderRadius: 12,
-          backgroundColor:
-            language === lang.code
-              ? "#4f46e5"
-              : "rgba(255,255,255,0.05)",
-          borderWidth: 1,
-          borderColor:
-            language === lang.code
-              ? "#4f46e5"
-              : "rgba(255,255,255,0.1)",
-        }}
-      >
-        <Text
-          style={{
-            color: language === lang.code ? "#fff" : "#94a3b8",
-            fontWeight: "600",
-          }}
-        >
-          {lang.name}
-        </Text>
-      </TouchableOpacity>
-    ))}
-  </ScrollView>
-</View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {LANGUAGES.map((lang) => (
+              <TouchableOpacity
+                key={lang.code}
+                onPress={() => setLanguage(lang.code)}
+                style={{
+                  paddingVertical: 8,
+                  paddingHorizontal: 14,
+                  marginRight: 10,
+                  borderRadius: 12,
+                  backgroundColor:
+                    language === lang.code
+                      ? "#4f46e5"
+                      : "rgba(255,255,255,0.05)",
+                  borderWidth: 1,
+                  borderColor:
+                    language === lang.code
+                      ? "#4f46e5"
+                      : "rgba(255,255,255,0.1)",
+                }}
+              >
+                <Text
+                  style={{
+                    color: language === lang.code ? "#fff" : "#94a3b8",
+                    fontWeight: "600",
+                  }}
+                >
+                  {lang.name}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
 
         {/* Mode Toggle */}
         <View
@@ -845,6 +992,26 @@ export default function BleVoicePage() {
             <View style={styles.resultHeader}>
               <View style={styles.resultDot} />
               <Text style={styles.resultHeaderText}>Translation</Text>
+              {!!audioUrl && (
+                <TouchableOpacity
+                  style={[
+                    styles.replayBtn,
+                    isPlayingAudio && styles.replayBtnActive,
+                  ]}
+                  onPress={() => playTranslatedAudio(audioUrl)}
+                  activeOpacity={0.75}
+                >
+                  <SpeakerIcon color={isPlayingAudio ? "#4f46e5" : "#22c55e"} />
+                  <Text
+                    style={[
+                      styles.replayBtnText,
+                      isPlayingAudio && { color: "#818cf8" },
+                    ]}
+                  >
+                    {isPlayingAudio ? "Playing…" : "Replay"}
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
             <Text style={styles.resultText}>{translatedText}</Text>
           </Animated.View>
@@ -1140,6 +1307,7 @@ const styles = StyleSheet.create({
     color: "#22c55e",
     fontWeight: "700",
     textTransform: "uppercase",
+    flex: 1,
   },
   resultText: {
     fontSize: 17,
@@ -1147,5 +1315,28 @@ const styles = StyleSheet.create({
     lineHeight: 26,
     fontWeight: "400",
     letterSpacing: 0.1,
+  },
+
+  // Replay button
+  replayBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "rgba(34,197,94,0.1)",
+    borderRadius: 8,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: "rgba(34,197,94,0.25)",
+  },
+  replayBtnActive: {
+    backgroundColor: "rgba(79,70,229,0.12)",
+    borderColor: "rgba(129,140,248,0.3)",
+  },
+  replayBtnText: {
+    color: "#22c55e",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.5,
   },
 });
